@@ -1,0 +1,7 @@
+# DECISIONS.md
+
+1. **Indexes.** `employees`: unique `emp_code` (duplicates, sorted list), `(department, emp_code)` (filtered list), `(department, joined_on)` and `(joined_on)` (headcount). `attendance_logs`: unique `(emp_code, date)` (punch-in guarantee, per-employee queries), `(date desc, emp_code)` (the list's sort order, month-wide scans), `(status, date, emp_code)` (status filter), `(emp_code, punch_in desc)` (punch-out lookup). Rejected: indexes on `late_minutes` / `work_hours`; they are only read after the date range has already narrowed the set.
+2. **Punch-in race.** Both requests build the same document and call `insert_one`, with no read first. The unique `(emp_code, date)` index lets exactly one insert win; the other raises `DuplicateKeyError`, which I turn into 409.
+3. **Ties.** `$rank` gives 1, 2, 2, 4. I keep rows with `rank <= limit` after ranking, so a tie at the cutoff returns every tied person, even if that is more than `limit` rows, ordered by minutes then `emp_code`.
+4. **Headcount.** The pipeline starts from `employees` (joined on or before month end), `$lookup`s their logs and unwinds with `preserveNullAndEmptyArrays`, so someone with no logs still yields a row. Headcount is the number of distinct `emp_code`s.
+5. **100x data.** Keep a small pre-aggregated daily-per-department document, updated on every write, so analytics read that instead of scanning a month of logs.
